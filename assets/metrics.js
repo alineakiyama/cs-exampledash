@@ -126,6 +126,50 @@ window.M = (function () {
     return [...m.values()];
   }
 
+  /* ------------------------------------------ refunds / returns / repl. --- */
+  /* Taxa de reembolso é DINHEIRO SOBRE DINHEIRO: devolvido ÷ receita da mesma janela. */
+  function refunds(D, w, store) {
+    const rows = D.refunds.filter((r) => inWin(r, w.from, w.to, store));
+    const total = sum(rows.map((r) => r.amount_usd));
+    const { revenue: rev, orders } = revenue(D, w, store);
+    return {
+      rows, count: rows.length, total, orders,
+      average: rows.length ? total / rows.length : null,
+      rate: percent(total, rev), perOrder: percent(rows.length, orders),
+      partialShare: percent(rows.filter((r) => r.type === 'partial').length, rows.length),
+      byReason: group(rows, 'reason', 'amount_usd'),
+      byAgent: group(rows, 'agent', 'amount_usd'),
+    };
+  }
+
+  function returns(D, w, store) {
+    const rows = D.returns.filter((r) => inWin(r, w.from, w.to, store));
+    return {
+      rows, count: rows.length, amount: sum(rows.map((r) => r.amount_usd)),
+      open: rows.filter((r) => r.status !== 'refunded' && r.status !== 'rejected').length,
+      byReason: group(rows, 'reason', 'amount_usd'), byStatus: group(rows, 'status'),
+    };
+  }
+
+  function replacements(D, w, store) {
+    const rows = D.replacements.filter((r) => inWin(r, w.from, w.to, store));
+    const supplier = sum(rows.map((r) => r.supplier_cost_usd)), shipping = sum(rows.map((r) => r.shipping_cost_usd));
+    return {
+      rows, count: rows.length, supplier, shipping, total: supplier + shipping,
+      repeats: rows.filter((r) => r.second_time).length,
+      byReason: group(rows, 'reason', 'supplier_cost_usd'),
+    };
+  }
+
+  function refundsByDay(D, w, store) {
+    const m = new Map();
+    for (let d = w.from; d <= w.to; d = addDays(d, 1)) m.set(d, { date: d, refunds: 0, returns: 0, replacements: 0, amount: 0 });
+    for (const r of D.refunds) if (inWin(r, w.from, w.to, store)) { const x = m.get(r.date); x.refunds++; x.amount += r.amount_usd; }
+    for (const r of D.returns) if (inWin(r, w.from, w.to, store)) m.get(r.date).returns++;
+    for (const r of D.replacements) if (inWin(r, w.from, w.to, store)) m.get(r.date).replacements++;
+    return [...m.values()];
+  }
+
   /* ---------------------------------------------------------- reviews --- */
   function reviews(D, w, store) {
     const rows = D.reviews.filter((r) => inWin(r, w.from, w.to, store));
@@ -180,5 +224,6 @@ window.M = (function () {
   }
 
   return { median, sum, percent, countUnder, addDays, daysBetween, presets, compareWindow, clamp,
-    tickets, ticketsByDay, byWeek, queueAt, revenue, chargebacks, chargebacksByDay, reviews, reviewsByDay, goal, change };
+    tickets, ticketsByDay, byWeek, queueAt, revenue, chargebacks, chargebacksByDay, reviews, reviewsByDay,
+    refunds, returns, replacements, refundsByDay, goal, change };
 })();

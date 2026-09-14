@@ -29,15 +29,21 @@
       state.store = b.dataset.store || null; render();
     });
     $('#content').addEventListener('click', (e) => {
+      const link = e.target.closest('[data-goto]');
+      if (link) { go(link.dataset.goto); return; }
       const card = e.target.closest('[data-store-card]'); if (!card) return;
       state.store = state.store === card.dataset.storeCard ? null : card.dataset.storeCard; render();
+    });
+    $('#content').addEventListener('keydown', (e) => {
+      const link = e.target.closest('[data-goto]');
+      if (link && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(link.dataset.goto); }
     });
     for (const id of ['#from', '#to']) { $(id).min = D.data_start; $(id).max = D.data_end; $(id).addEventListener('input', () => { $('#apply').disabled = !hint(); }); }
     $('#range').addEventListener('submit', (e) => { e.preventDefault(); if (!hint()) return; setRange($('#from').value, $('#to').value); render(); });
     $('#reset').addEventListener('click', () => { const p = PRESETS.find((x) => x.id === 'd7'); state.store = null; setRange(p.from, p.to); render(); });
 
-    document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => { state.view = t.dataset.view; location.hash = state.view; render(); scrollTo({ top: 0 }); }));
-    const h = location.hash.slice(1); if (['overview', 'chargebacks', 'reviews'].includes(h)) state.view = h;
+    document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => go(t.dataset.view)));
+    const h = location.hash.slice(1); if (['overview', 'refunds', 'chargebacks', 'reviews'].includes(h)) state.view = h;
 
     let theme = 'dark'; try { theme = localStorage.getItem('cs-theme') || 'dark'; } catch {}
     applyTheme(theme);
@@ -45,6 +51,11 @@
 
     const p = PRESETS.find((x) => x.id === state.presetId);
     setRange(p.from, p.to); render();
+  }
+
+  function go(view) {
+    if (!VIEWS[view]) return;
+    state.view = view; location.hash = view; render(); scrollTo({ top: 0 });
   }
 
   function applyTheme(t) {
@@ -152,14 +163,92 @@
         <tfoot><tr><td>All stores</td><td class="num">${fmtInt(all.received)}</td><td class="num">${fmtInt(all.closed)}</td><td class="num">${fmtHours(all.frtMedian)}</td><td class="num">${fmtPct(all.under24)}</td><td class="num">${fmtHours(all.resMedian)}</td><td class="num">${fmtPct(all.reopenRate)}</td><td class="num">${fmtInt(M.queueAt(D, w().to, null).backlog)}</td></tr></tfoot>
       </table></div><p class="note">The total row is recomputed over every conversation pooled together. Counts add up; medians and percentages do not.</p>`;
 
+      /* Resumo das outras abas: um número por assunto, clicável, para saber
+         onde olhar antes de abrir cada aba. */
+      const rf = M.refunds(D, w(), state.store), rfPrev = cmp() ? M.refunds(D, cmp(), state.store) : null;
+      const rp = M.replacements(D, w(), state.store);
+      const cb = M.chargebacks(D, w(), state.store), cbPrev = cmp() ? M.chargebacks(D, cmp(), state.store) : null;
+      const rv = M.reviews(D, w(), state.store), rvPrev = cmp() ? M.reviews(D, cmp(), state.store) : null;
+      const dRefund = M.change(rf.rate, rfPrev?.rate, 'lower'), dCb = M.change(cb.rate, cbPrev?.rate, 'lower'), dRating = M.change(rv.avg, rvPrev?.avg, 'higher');
+      const go = (view, html) => `<div class="goto" data-goto="${view}" role="link" tabindex="0" title="Open the ${view} tab">${html}</div>`;
+      const across = [
+        go('refunds', C.tile({ label: 'Refund rate', value: fmtPct(rf.rate, 2), status: M.goal(rf.rate, D.targets.refundRate), foot: `${fmtInt(rf.count)} refunds · ${fmtMoney(rf.total)}`, delta: dRefund, deltaText: deltaText(dRefund, null, 2), prevText: prevText(rfPrev?.rate, (v) => fmtPct(v, 2)) })),
+        go('refunds', C.tile({ label: 'Cost of going wrong', value: fmtMoney(rf.total + rp.total), foot: `refunds + ${fmtInt(rp.count)} replacements · ${fmtPct(M.percent(rf.total + rp.total, M.revenue(D, w(), state.store).revenue), 2)} of revenue` })),
+        go('chargebacks', C.tile({ label: 'Chargeback rate', value: fmtPct(cb.rate, 2), status: M.goal(cb.rate, D.targets.cbRate), foot: `${fmtInt(cb.count)} disputes · ${fmtInt(cb.pending.length)} pending`, delta: dCb, deltaText: deltaText(dCb, null, 2), prevText: prevText(cbPrev?.rate, (v) => fmtPct(v, 2)) })),
+        go('reviews', C.tile({ label: 'Trustpilot', value: fmtStars(rv.avg), unit: '★', status: M.goal(rv.avg, D.targets.rating), foot: `${fmtInt(rv.count)} reviews · ${fmtInt(rv.lowOpen)} low-star still open`, delta: dRating, deltaText: deltaText(dRating, fmtStars), prevText: prevText(rvPrev?.avg, fmtStars) })),
+      ].join('');
+
       return `
         <section class="section"><div class="section__head"><h2 class="section__title">Headline</h2><span class="section__sub">${esc(scope())}</span></div><div class="grid grid--kpi">${kpis}</div></section>
+        <section class="section"><div class="section__head"><h2 class="section__title">Across the board</h2><span class="section__sub">One number from each of the other tabs. Click to open it.</span></div><div class="grid grid--kpi grid--across">${across}</div></section>
         <section class="section"><div class="section__head"><h2 class="section__title">Stores</h2><span class="section__sub">Same period. Click a store to see only it.</span></div><div class="grid grid--stores">${cards}</div></section>
         <section class="section"><div class="grid grid--2">
           <div class="card"><div class="card__head"><div><h3 class="card__title">Emails received vs closed per ${P.unit}</h3><p class="card__note">The ${P.unit}s where received sits above closed are the ${P.unit}s the queue grew.</p></div></div><div class="card__body">${volume}${P.note}</div></div>
           <div class="card"><div class="card__head"><div><h3 class="card__title">First response per ${P.unit}</h3><p class="card__note">Median hours to the first human reply${P.weekly ? ', pooled over the week' : ''}.</p></div></div><div class="card__body">${frt}${P.note}</div></div>
         </div></section>
         <section class="section"><div class="card"><div class="card__head"><div><h3 class="card__title">Store comparison</h3><p class="card__note">Every store, regardless of the store filter.</p></div></div><div class="card__body">${table}</div></div></section>`;
+    },
+
+    /* ================================================================ */
+    refunds() {
+      const L = (k) => D.reason_labels[k] || k;
+      const rf = M.refunds(D, w(), state.store), rfPrev = cmp() ? M.refunds(D, cmp(), state.store) : null;
+      const rt = M.returns(D, w(), state.store), rtPrev = cmp() ? M.returns(D, cmp(), state.store) : null;
+      const rp = M.replacements(D, w(), state.store), rpPrev = cmp() ? M.replacements(D, cmp(), state.store) : null;
+      const money = M.revenue(D, w(), state.store);
+      const cost = rf.total + rp.total;
+      const costPrev = rfPrev ? rfPrev.total + rpPrev.total : null;
+      const dRate = M.change(rf.rate, rfPrev?.rate, 'lower'), dRf = M.change(rf.count, rfPrev?.count, 'lower');
+      const dRt = M.change(rt.count, rtPrev?.count, 'lower'), dRp = M.change(rp.count, rpPrev?.count, 'lower'), dCost = M.change(cost, costPrev, 'lower');
+
+      const kpis = [
+        C.tile({ label: 'Refund rate', value: fmtPct(rf.rate, 2), status: M.goal(rf.rate, D.targets.refundRate), foot: `${fmtMoney(rf.total)} refunded against ${fmtMoney(money.revenue)} in revenue`, delta: dRate, deltaText: deltaText(dRate, null, 2), prevText: prevText(rfPrev?.rate, (v) => fmtPct(v, 2)) }),
+        C.tile({ label: 'Refunds', value: fmtInt(rf.count), foot: `${fmtMoney(rf.average, true)} average · ${fmtPct(rf.partialShare, 0)} partial`, delta: dRf, deltaText: pctText(dRf), prevText: prevText(rfPrev?.count, fmtInt) }),
+        C.tile({ label: 'Returns', value: fmtInt(rt.count), foot: `${fmtMoney(rt.amount)} in goods · ${fmtInt(rt.open)} still in progress`, delta: dRt, deltaText: pctText(dRt), prevText: prevText(rtPrev?.count, fmtInt) }),
+        C.tile({ label: 'Replacements', value: fmtInt(rp.count), foot: `${fmtMoney(rp.total)} in product + shipping · ${fmtInt(rp.repeats)} sent twice`, delta: dRp, deltaText: pctText(dRp), prevText: prevText(rpPrev?.count, fmtInt) }),
+        C.tile({ label: 'Cost of going wrong', value: fmtMoney(cost), foot: `refunds + replacements · ${fmtPct(M.percent(cost, money.revenue), 2)} of revenue`, delta: dCost, deltaText: pctText(dCost), prevText: prevText(costPrev, fmtMoney) }),
+      ].join('');
+
+      const days = M.refundsByDay(D, w(), state.store);
+      const P = pooled(days, ['refunds', 'returns', 'replacements', 'amount']);
+      const one = P.pts.length === 1;
+      const line = one ? `<dl class="stat-inline"><div><dt>Refunds</dt><dd>${fmtInt(P.pts[0].refunds)}</dd></div><div><dt>Returns</dt><dd>${fmtInt(P.pts[0].returns)}</dd></div><div><dt>Replacements</dt><dd>${fmtInt(P.pts[0].replacements)}</dd></div></dl><p class="note">A single day has no trend to draw.</p>`
+        : C.lineChart({ days: P.pts.map((p) => p.date), titles: P.titles, xLabel: P.xLabel, ariaLabel: 'Refunds, returns and replacements per period', series: [
+            { label: 'Refunds', color: 'var(--series-1)', values: P.pts.map((p) => p.refunds) },
+            { label: 'Returns', color: 'var(--store-2)', values: P.pts.map((p) => p.returns) },
+            { label: 'Replacements', color: 'var(--series-2)', values: P.pts.map((p) => p.replacements) } ] }) +
+          C.legend([{ label: 'Refunds', color: 'var(--series-1)' }, { label: 'Returns', color: 'var(--store-2)' }, { label: 'Replacements', color: 'var(--series-2)' }]);
+
+      const reasonCard = (title, note, groups, color, sub) => `
+        <div class="card"><div class="card__head"><div><h3 class="card__title">${title}</h3><p class="card__note">${note}</p></div></div>
+        <div class="card__body">${groups.length ? C.barList(groups.map((g) => ({ label: L(g.key), value: g.count, sub: sub(g) })), { color }) : '<p class="note">Nothing recorded in this period.</p>'}</div></div>`;
+
+      const perStore = D.stores.map((s) => ({ s, rf: M.refunds(D, w(), s.id), rt: M.returns(D, w(), s.id), rp: M.replacements(D, w(), s.id), rev: M.revenue(D, w(), s.id) }));
+      const table = `<div class="tablewrap"><table>
+        <thead><tr><th>Store</th><th class="num">Revenue</th><th class="num">Refunds</th><th class="num">Refunded</th><th class="num">Refund rate</th><th class="num">Returns</th><th class="num">Replacements</th><th class="num">Repl. cost</th><th class="num">Total cost</th></tr></thead>
+        <tbody>${perStore.map(({ s, rf, rt, rp, rev }) => `<tr><td><i class="dot" style="background:${STORE_COLOR[s.id]}"></i>${esc(s.name)}</td>
+          <td class="num">${fmtMoney(rev.revenue)}</td><td class="num">${fmtInt(rf.count)}</td><td class="num">${fmtMoney(rf.total)}</td>
+          <td class="num">${fmtPct(rf.rate, 2)} ${C.chip(M.goal(rf.rate, D.targets.refundRate))}</td><td class="num">${fmtInt(rt.count)}</td>
+          <td class="num">${fmtInt(rp.count)}</td><td class="num">${fmtMoney(rp.total)}</td><td class="num">${fmtMoney(rf.total + rp.total)}</td></tr>`).join('')}</tbody></table></div>`;
+
+      const TYPE = { full: 'Full', partial: 'Partial' };
+      const recent = [...rf.rows].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 12);
+      const list = `<div class="tablewrap"><table>
+        <thead><tr><th>Date</th><th>Store</th><th>Order</th><th>Reason</th><th>Type</th><th class="num">Amount</th><th>Logged by</th></tr></thead>
+        <tbody>${recent.map((r) => `<tr><td>${fmtDay(r.date)}</td><td>${esc(storeName(r.store_id))}</td><td>${esc(r.order_id)}</td><td>${esc(L(r.reason))}</td><td>${TYPE[r.type]}</td><td class="num">${fmtMoney(r.amount_usd, true)}</td><td>${esc(r.agent.replace('_', ' '))}</td></tr>`).join('') || '<tr><td colspan="7">No refunds in this period.</td></tr>'}</tbody></table></div>`;
+
+      return `
+        <section class="section"><div class="section__head"><h2 class="section__title">Refunds, returns and replacements</h2><span class="section__sub">${esc(scope())}</span></div><div class="grid grid--kpi">${kpis}</div></section>
+        <section class="section"><div class="card"><div class="card__head"><div><h3 class="card__title">Cases per ${P.unit}</h3><p class="card__note">Each line counts cases logged that ${P.unit}. Refund rate is money over money — the amount given back divided by revenue for the same window.</p></div></div><div class="card__body">${line}${P.note}</div></div></section>
+        <section class="section"><div class="grid grid--3">
+          ${reasonCard('Why we refunded', 'The reason picked when the refund was logged, out of a fixed list of ten.', rf.byReason, 'var(--series-1)', (g) => fmtMoney(g.amount))}
+          ${reasonCard('Why items came back', 'Reason given on the return request.', rt.byReason, 'var(--store-2)', (g) => fmtMoney(g.amount))}
+          ${reasonCard('Why we sent a replacement', 'Reason logged with the replacement order.', rp.byReason, 'var(--series-2)', (g) => `${fmtMoney(g.amount)} product`)}
+        </div></section>
+        <section class="section"><div class="grid grid--2">
+          <div class="card"><div class="card__head"><div><h3 class="card__title">By store</h3><p class="card__note">Every store, regardless of the store filter. Total cost is refunds plus replacement product and shipping.</p></div></div><div class="card__body">${table}</div></div>
+          <div class="card"><div class="card__head"><div><h3 class="card__title">Latest refunds</h3><p class="card__note">The 12 most recent entries, as logged in the sheet.</p></div></div><div class="card__body">${list}</div></div>
+        </div></section>`;
     },
 
     /* ================================================================ */

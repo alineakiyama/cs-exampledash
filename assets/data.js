@@ -37,8 +37,25 @@ window.DATA = (function () {
   const CB_REASONS = ['fraud_unauthorised', 'product_not_received', 'product_not_as_described', 'duplicate_charge', 'subscription_cancelled'];
   const NETWORKS = ['visa', 'visa', 'mastercard', 'mastercard', 'amex', 'discover'];
 
-  const tickets = [], queue = [], revenue = [], chargebacks = [], reviews = [];
-  let cbN = 0, rvN = 0;
+  /* Motivos como saem da planilha/banco: uma lista fixa por tipo, escolhida
+     pelo atendente na hora de registrar. Pesos = frequência aproximada. */
+  const REFUND_REASONS = [
+    ['not_delivered', 22], ['damaged_in_transit', 14], ['quality_issue', 12], ['late_delivery', 10],
+    ['changed_mind', 9], ['wrong_item', 8], ['subscription_charge', 8], ['adverse_reaction', 6],
+    ['missing_part', 6], ['duplicate_order', 5],
+  ];
+  const RETURN_REASONS = [
+    ['changed_mind', 30], ['not_as_described', 20], ['quality_issue', 16], ['wrong_item', 14],
+    ['damaged_on_arrival', 12], ['arrived_too_late', 8],
+  ];
+  const REPLACEMENT_REASONS = [
+    ['damaged_in_transit', 32], ['lost_in_transit', 24], ['missing_part', 18], ['wrong_item', 14], ['defective', 12],
+  ];
+  const AGENTS = ['agent_a', 'agent_b', 'agent_c', 'agent_d', 'agent_e'];
+  const pickWeighted = (list) => list[weighted(list.map((x) => x[1] / list.reduce((t, y) => t + y[1], 0)))][0];
+
+  const tickets = [], queue = [], revenue = [], chargebacks = [], reviews = [], refunds = [], returns = [], replacements = [];
+  let cbN = 0, rvN = 0, rfN = 0, rtN = 0, rpN = 0;
 
   for (const s of STORES) {
     let backlog = Math.round(s.base * 0.9);
@@ -80,6 +97,34 @@ window.DATA = (function () {
         });
       }
 
+      // Reembolsos ~2–3% dos pedidos em valor; a Store 3 devolve mais.
+      const nRf = Math.floor(orders * (s.id === 'store3' ? 0.036 : 0.021) * rand(0.7, 1.3) + R());
+      for (let k = 0; k < nRf; k++) {
+        const partial = R() < 0.3;
+        refunds.push({
+          id: `rf_${String(++rfN).padStart(4, '0')}`, store_id: s.id, date, order_id: `#${100000 + Math.floor(R() * 900000)}`,
+          amount_usd: Math.round(rand(partial ? 8 : 29, partial ? 45 : 160) * 100) / 100,
+          type: partial ? 'partial' : 'full', reason: pickWeighted(REFUND_REASONS), agent: pick(AGENTS),
+        });
+      }
+      const nRt = Math.floor(orders * 0.012 * rand(0.6, 1.4) + R());
+      for (let k = 0; k < nRt; k++) {
+        const age = DAYS - 1 - i;
+        returns.push({
+          id: `rt_${String(++rtN).padStart(4, '0')}`, store_id: s.id, date, order_id: `#${100000 + Math.floor(R() * 900000)}`,
+          amount_usd: Math.round(rand(25, 140) * 100) / 100, reason: pickWeighted(RETURN_REASONS),
+          status: age > 14 ? (R() < 0.92 ? 'refunded' : 'rejected') : age > 5 ? (R() < 0.5 ? 'received' : 'in_transit') : 'requested',
+        });
+      }
+      const nRp = Math.floor(orders * 0.009 * rand(0.6, 1.4) + R());
+      for (let k = 0; k < nRp; k++) {
+        replacements.push({
+          id: `rp_${String(++rpN).padStart(4, '0')}`, store_id: s.id, date, order_id: `#${100000 + Math.floor(R() * 900000)}`,
+          reason: pickWeighted(REPLACEMENT_REASONS), supplier_cost_usd: Math.round(rand(6, 38) * 100) / 100,
+          shipping_cost_usd: Math.round(rand(4, 14) * 100) / 100, second_time: R() < 0.07,
+        });
+      }
+
       const nRv = Math.floor((s.base / 28) * w * rand(0.6, 1.4) + R());
       for (let k = 0; k < nRv; k++) {
         const rating = weighted(s.stars) + 1;
@@ -100,12 +145,20 @@ window.DATA = (function () {
     data_start: START, data_end: END,
     generated_at: '2026-09-14T16:00:00-03:00',
     timezone: 'America/Sao_Paulo',
-    tickets, queue, revenue, chargebacks, reviews,
+    tickets, queue, revenue, chargebacks, reviews, refunds, returns, replacements,
+    reason_labels: {
+      not_delivered: 'Never delivered', damaged_in_transit: 'Damaged in transit', quality_issue: 'Product quality',
+      late_delivery: 'Late delivery', changed_mind: 'Changed their mind', wrong_item: 'Wrong item sent',
+      subscription_charge: 'Unwanted subscription charge', adverse_reaction: 'Adverse reaction', missing_part: 'Item missing',
+      duplicate_order: 'Duplicate order', not_as_described: 'Not as described', damaged_on_arrival: 'Damaged on arrival',
+      arrived_too_late: 'Arrived too late', lost_in_transit: 'Lost in transit', defective: 'Defective product',
+    },
     targets: {
       frt:    { label: 'First response (median)', unit: 'hours',   goal: 4,   warning: 8,   direction: 'lower' },
       under24:{ label: 'Answered within 24h',     unit: 'percent', goal: 90,  warning: 80,  direction: 'higher' },
       res:    { label: 'Resolution (median)',     unit: 'hours',   goal: 24,  warning: 36,  direction: 'lower' },
       cbRate: { label: 'Chargeback rate',         unit: 'percent', goal: 0.6, warning: 0.9, direction: 'lower' },
+      refundRate: { label: 'Refund rate',         unit: 'percent', goal: 2.5, warning: 3.5, direction: 'lower' },
       rating: { label: 'Trustpilot average',      unit: 'stars',   goal: 4.5, warning: 4.2, direction: 'higher' },
       lowReply:{ label: 'Low-star reviews replied within 48h', unit: 'percent', goal: 90, warning: 75, direction: 'higher' },
     },

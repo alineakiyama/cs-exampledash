@@ -1,7 +1,8 @@
 # CS Reporting — demo
 
 Customer-support reporting dashboard for four generic stores (**Store 1–4**): emails received
-and closed, first-response and resolution times, queue, chargebacks and Trustpilot reviews.
+and closed, first-response and resolution times, queue, refunds / returns / replacements,
+chargebacks and Trustpilot reviews.
 
 > **Every number here is fake.** `assets/data.js` generates the whole data set from a fixed
 > seed, so each load shows exactly the same figures. No real store, customer or order data.
@@ -25,7 +26,8 @@ Then open <http://localhost:8125/>.
 
 | Tab | Contents |
 |---|---|
-| **Overview** | Emails received / closed, first response, resolution, answered under 24h, queue at period end; one card per store; volume and first-response charts; store comparison table |
+| **Overview** | Emails received / closed, first response, resolution, answered under 24h, queue at period end; one headline number from each other tab; one card per store; volume and first-response charts; store comparison table |
+| **Refunds** | Refund rate (money ÷ revenue), refunds, returns, replacements, cost of going wrong; cases per day; top reasons for each of the three, as logged in the sheet; per-store table; latest refunds |
 | **Chargebacks** | Disputes opened, chargeback rate (disputes ÷ orders), pending, win rate, money lost; disputes per day, status and reasons; per-store table; latest cases |
 | **Trustpilot** | Reviews received, average rating, 1–3★ share, low-star reviews replied within 48h, still open; reviews per day, rating distribution; per-store table |
 
